@@ -1,0 +1,12 @@
+# Stategy:
+# 1. on Dbus signal DeviceAdded from UDisks get the object path
+# 2. use mount/UDisks to find out where device is mounted
+# 3. mkdir marssa
+# 4. on fail assume dir exists
+# 5. on success create marrsa/TV marssa/Films marssa/Other_Video marssa/Music-Exit
+# 6. check disk space is sufficient. Warn on low disk space
+# 7. copy file one by one all supported files from marssa/* (checking that a file with the same name does not allready exist) to a temporary location
+# 8. on copy check md5sum of both files
+# 9. on success move from temporary location to real location
+# 10. if signal DeviceRemoved(Object Path) signal is received abort all
+# operations and files in temp location

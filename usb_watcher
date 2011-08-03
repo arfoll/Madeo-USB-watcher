@@ -1,0 +1,148 @@
+#!/usr/bin/env python
+
+# Madeo USB watcher
+# Brendan Le Foll 2011 - brendan@fridu.net
+
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with madeo-uplayer; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301  USA
+
+import sys, os
+import gobject
+import dbus
+import dbus.service
+from dbus.mainloop.glib import DBusGMainLoop
+import string
+import logging
+import shutil
+import hashlib
+
+UDISK_BUS_NAME='org.freedesktop.UDisks'
+UDISK_BUS_PATH='/org/freedesktop/UDisks'
+LOG_FILENAME='/tmp/usb_watcher.log'
+MEDIA_PATH='/home/meego/'
+TMP_SUFFIX='_tmp'
+FOLDER_NAME='MeeGo'
+TMP_MEDIA_PATH=MEDIA_PATH + FOLDER_NAME + TMP_SUFFIX
+REAL_MEDIA_PATH=MEDIA_PATH + FOLDER_NAME
+
+logging.basicConfig(filename=LOG_FILENAME,level=logging.DEBUG)
+
+class DbusWatcher(dbus.service.Object):
+    _object_path = ''
+    bus = ''
+    abort = True
+    mounted = False
+    device = ''
+
+    def __init__(self):
+        self.bus = dbus.SystemBus()
+        self.bus.add_signal_receiver(self.device_added_handler,
+                dbus_interface=UDISK_BUS_NAME, signal_name = "DeviceAdded")
+        self.bus.add_signal_receiver(self.device_removed_handler,
+                dbus_interface=UDISK_BUS_NAME, signal_name = "DeviceRemoved")
+        self.bus.add_signal_receiver(self.device_changed_handler,
+                dbus_interface=UDISK_BUS_NAME, signal_name = "DeviceChanged")
+
+    def get_mountpoint(self, device):
+        device_obj = self.bus.get_object("org.freedesktop.UDisks", device)
+        device_props = dbus.Interface(device_obj, dbus.PROPERTIES_IFACE)
+        mount_point = []
+        #TODO: add timeout
+        print "waiting for mountpoint on " + str(device)
+        if device_props.Get('org.freedesktop.UDisks.Device', "DriveConnectionInterface") == "usb":
+            while len(mount_point) == 0 or self.abort:
+                mount_point = device_props.Get('org.freedesktop.UDisks.Device', "DeviceMountPaths")
+        else:
+            return
+
+        self.mounted = True
+        print "found mountpoint " + mount_point[0]
+        return mount_point[0]
+        
+    def check_mountpoint(self, device):
+        device_obj = self.bus.get_object("org.freedesktop.UDisks", device)
+        device_props = dbus.Interface(device_obj, dbus.PROPERTIES_IFACE)
+        mount_point = device_props.Get('org.freedesktop.UDisks.Device', "DeviceMountPaths")
+        if len(mount_point) != 0:
+            return True
+        return False
+
+    def check_device_is_real(self, device):
+        if device[len(device)-1] == '1':
+            print "Device is real!"
+            self.abort = False
+            return True
+        print "Device %s not real" % device[len(device) -1]
+        return False
+
+    def device_added_handler(self, *args, **kwargs):
+        print str(args[0])
+        if self.check_device_is_real(str(args[0])):
+            self.device = args[0]
+            mount_point = self.get_mountpoint(args[0])
+            self.make_directories(mount_point)
+
+    def device_removed_handler(self, *args, **kwargs):
+        if self.device == args[0]:
+            print "Houston we lost our device..."
+            self.abort = True
+            
+    def device_changed_handler(self, *args, **kwargs):
+        print "Device we have" + self.device + " device here" +args[0]
+        if self.device == args[0]:
+            if not self.mounted or self.check_mountpoint(args[0]):
+                print "continue"
+                self.abort = False
+            else:
+                print "Abort. Device got unmounted"
+                self.abort = True
+                
+    def make_directories(self, mount_point):
+        print "path is %s" % mount_point+'/MeeGo'
+        if not os.path.exists(mount_point+'/MeeGo'):
+            print "Making directories"
+            try:
+                os.makedirs(mount_point+'/MeeGo')
+                os.makedirs(mount_point+'/MeeGo/Video/Films')
+                os.makedirs(mount_point+'/MeeGo/Video/TV')
+                os.makedirs(mount_point+'/MeeGo/Video/Other')
+                os.makedirs(mount_point+'/MeeGo/Music')
+                os.makedirs(mount_point+'/MeeGo/Photos')
+            except:
+                print "Permissions getting in your way ;-)"
+        else:
+            print "Dir allready existed, import time"
+            self.copy_media(mount_point+'/MeeGo')
+            
+    def copy_media(self, path):
+        print "copying from " + path
+        # copy data type by type
+        self.copy_media_indiv(path +'/Photos', TMP_MEDIA_PATH + '/Photos', REAL_MEDIA_PATH + '/Photos')
+        self.copy_media_indiv(path +'/Music', TMP_MEDIA_PATH + '/Music', REAL_MEDIA_PATH + '/Music')
+        self.copy_media_indiv(path +'/Videos', TMP_MEDIA_PATH + '/Videos', REAL_MEDIA_PATH + '/Videos')
+        
+    def copy_media_indiv (self, import_dir, destination_dir, final_dir):
+        print "copying photos"
+        shutil.copytree(import_dir, destination_dir)
+        # TODO: file verification
+        shutil.move(destination_dir, final_dir)
+        
+
+DBusGMainLoop(set_as_default=True)
+watcher = DbusWatcher()
+
+logging.debug ("Starting usb_watcher...")
+loop = gobject.MainLoop()
+loop.run()
